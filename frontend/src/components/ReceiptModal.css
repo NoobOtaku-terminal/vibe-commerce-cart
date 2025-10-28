@@ -1,0 +1,141 @@
+.receipt-modal {
+  max-width: 550px;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  margin: 0 auto 20px;
+  animation: scaleUp 0.5s ease-out;
+}
+
+@keyframes scaleUp {
+  0% {
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.success-message {
+  text-align: center;
+  font-size: 1.3rem;
+  color: #10b981;
+  font-weight: 600;
+  margin-bottom: 30px;
+}
+
+.receipt-details {
+  background: #f9f9f9;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.receipt-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.receipt-row:last-child {
+  border-bottom: none;
+}
+
+.receipt-label {
+  color: #666;
+  font-weight: 500;
+}
+
+.receipt-value {
+  color: #333;
+  font-weight: 600;
+}
+
+.receipt-items {
+  margin-bottom: 20px;
+}
+
+.receipt-items h3 {
+  font-size: 1.2rem;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.receipt-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.receipt-total {
+  display: flex;
+  justify-content: space-between;
+  padding: 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  color: white;
+  font-size: 1.2rem;
+  margin-bottom: 20px;
+}
+
+.receipt-total .total-amount {
+  font-size: 1.8rem;
+}
+
+.done-btn {
+  width: 100%;
+  padding: 15px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.done-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.done-btn:active {
+  transform: translateY(0);
+}
+
+@media (max-width: 768px) {
+  .success-icon {
+    width: 60px;
+    height: 60px;
+    font-size: 2rem;
+  }
+
+  .success-message {
+    font-size: 1.1rem;
+  }
+
+  .receipt-total {
+    font-size: 1rem;
+  }
+
+  .receipt-total .total-amount {
+    font-size: 1.4rem;
+  }
+}
