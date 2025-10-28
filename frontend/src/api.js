@@ -9,6 +9,44 @@ const api = axios.create({
   },
 });
 
+// Add token to requests if available
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Auth API
+export const register = async (name, email, password) => {
+  const response = await api.post('/auth/register', { name, email, password });
+  return response.data;
+};
+
+export const login = async (email, password) => {
+  const response = await api.post('/auth/login', { email, password });
+  return response.data;
+};
+
+export const getCurrentUser = async () => {
+  const response = await api.get('/auth/me');
+  return response.data;
+};
+
 // Products API
 export const getProducts = async () => {
   const response = await api.get('/products');
@@ -54,6 +92,42 @@ export const checkout = async (customerName, customerEmail, cartItems) => {
 // Orders API
 export const getOrders = async () => {
   const response = await api.get('/orders');
+  return response.data;
+};
+
+// Admin API
+export const getAdminStats = async () => {
+  const response = await api.get('/admin/stats');
+  return response.data;
+};
+
+export const getAdminUsers = async () => {
+  const response = await api.get('/admin/users');
+  return response.data;
+};
+
+export const getAdminOrders = async () => {
+  const response = await api.get('/admin/orders');
+  return response.data;
+};
+
+export const updateOrderStatus = async (orderId, status) => {
+  const response = await api.put(`/admin/orders/${orderId}/status`, { status });
+  return response.data;
+};
+
+export const createProduct = async (productData) => {
+  const response = await api.post('/admin/products', productData);
+  return response.data;
+};
+
+export const updateProduct = async (productId, productData) => {
+  const response = await api.put(`/admin/products/${productId}`, productData);
+  return response.data;
+};
+
+export const deleteProduct = async (productId) => {
+  const response = await api.delete(`/admin/products/${productId}`);
   return response.data;
 };
 

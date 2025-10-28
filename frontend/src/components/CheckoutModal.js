@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import './CheckoutModal.css';
 
 function CheckoutModal({ cart, onClose, onSubmit }) {
@@ -60,11 +61,31 @@ function CheckoutModal({ cart, onClose, onSubmit }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content checkout-modal" onClick={(e) => e.stopPropagation()}>
+    <motion.div 
+      className="modal-overlay" 
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div 
+        className="modal-content checkout-modal" 
+        onClick={(e) => e.stopPropagation()}
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+      >
         <div className="modal-header">
           <h2>Checkout</h2>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <motion.button 
+            className="close-btn" 
+            onClick={onClose}
+            whileHover={{ rotate: 90 }}
+            whileTap={{ scale: 0.9 }}
+          >
+            ✕
+          </motion.button>
         </div>
 
         <div className="modal-body">
@@ -136,8 +157,8 @@ function CheckoutModal({ cart, onClose, onSubmit }) {
             </div>
           </form>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 

@@ -1,7 +1,12 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { body, validationResult } = require('express-validator');
 const db = require('./database');
+const { authMiddleware, adminMiddleware } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -39,12 +44,174 @@ const dbRun = (query, params = []) => {
   });
 };
 
-// Routes
+// ==================== AUTH ROUTES ====================
+
+// POST /api/auth/register - Register new user
+app.post('/api/auth/register', [
+  body('email').isEmail().normalizeEmail(),
+  body('password').isLength({ min: 6 }),
+  body('name').trim().notEmpty()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password, name } = req.body;
+
+    // Check if user exists
+    const existingUser = await dbGet('SELECT * FROM users WHERE email = ?', [email]);
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const result = await dbRun(
+      'INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)',
+      [email, hashedPassword, name, 'user']
+    );
+
+    // Generate token
+    const token = jwt.sign(
+      { id: result.id, email, role: 'user' },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      data: {
+        token,
+        user: {
+          id: result.id,
+          email,
+          name,
+          role: 'user'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/auth/login - User login
+app.post('/api/auth/login', [
+  body('email').isEmail().normalizeEmail(),
+  body('password').notEmpty()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Find user
+    const user = await dbGet('SELECT * FROM users WHERE email = ?', [email]);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Login failed',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/auth/me - Get current user
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await dbGet(
+      'SELECT id, email, name, role, created_at FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user data',
+      error: error.message
+    });
+  }
+});
+
+// ==================== PRODUCT ROUTES ====================
 
 // GET /api/products - Get all products
 app.get('/api/products', async (req, res) => {
   try {
-    const products = await dbAll('SELECT * FROM products');
+    const products = await dbAll('SELECT * FROM products ORDER BY created_at DESC');
     res.json({
       success: true,
       data: products
@@ -84,8 +251,10 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
+// ==================== CART ROUTES (Protected) ====================
+
 // POST /api/cart - Add item to cart
-app.post('/api/cart', async (req, res) => {
+app.post('/api/cart', authMiddleware, async (req, res) => {
   try {
     const { productId, quantity } = req.body;
     
@@ -103,7 +272,7 @@ app.post('/api/cart', async (req, res) => {
       });
     }
 
-    // Check if product exists
+    // Check if product exists and has stock
     const product = await dbGet('SELECT * FROM products WHERE id = ?', [productId]);
     if (!product) {
       return res.status(404).json({
@@ -112,17 +281,31 @@ app.post('/api/cart', async (req, res) => {
       });
     }
 
+    if (product.stock < quantity) {
+      return res.status(400).json({
+        success: false,
+        message: `Only ${product.stock} items available in stock`
+      });
+    }
+
     // Check if item already in cart
     const existingItem = await dbGet(
       'SELECT * FROM cart_items WHERE product_id = ? AND user_id = ?',
-      [productId, 'mock-user']
+      [productId, req.user.id]
     );
 
     if (existingItem) {
+      const newQuantity = existingItem.quantity + quantity;
+      if (product.stock < newQuantity) {
+        return res.status(400).json({
+          success: false,
+          message: `Only ${product.stock} items available in stock`
+        });
+      }
       // Update quantity
       await dbRun(
-        'UPDATE cart_items SET quantity = quantity + ? WHERE id = ?',
-        [quantity, existingItem.id]
+        'UPDATE cart_items SET quantity = ? WHERE id = ?',
+        [newQuantity, existingItem.id]
       );
       res.json({
         success: true,
@@ -133,7 +316,7 @@ app.post('/api/cart', async (req, res) => {
       // Insert new cart item
       const result = await dbRun(
         'INSERT INTO cart_items (product_id, quantity, user_id) VALUES (?, ?, ?)',
-        [productId, quantity, 'mock-user']
+        [productId, quantity, req.user.id]
       );
       res.status(201).json({
         success: true,
@@ -152,7 +335,7 @@ app.post('/api/cart', async (req, res) => {
 });
 
 // GET /api/cart - Get cart items with product details and total
-app.get('/api/cart', async (req, res) => {
+app.get('/api/cart', authMiddleware, async (req, res) => {
   try {
     const cartItems = await dbAll(`
       SELECT 
@@ -165,12 +348,13 @@ app.get('/api/cart', async (req, res) => {
         p.description,
         p.image,
         p.category,
+        p.stock,
         (c.quantity * p.price) as subtotal
       FROM cart_items c
       JOIN products p ON c.product_id = p.id
       WHERE c.user_id = ?
       ORDER BY c.created_at DESC
-    `, ['mock-user']);
+    `, [req.user.id]);
 
     const total = cartItems.reduce((sum, item) => sum + item.subtotal, 0);
 
@@ -193,7 +377,7 @@ app.get('/api/cart', async (req, res) => {
 });
 
 // PUT /api/cart/:id - Update cart item quantity
-app.put('/api/cart/:id', async (req, res) => {
+app.put('/api/cart/:id', authMiddleware, async (req, res) => {
   try {
     const { quantity } = req.body;
     const cartItemId = req.params.id;
@@ -205,17 +389,32 @@ app.put('/api/cart/:id', async (req, res) => {
       });
     }
 
-    const result = await dbRun(
-      'UPDATE cart_items SET quantity = ? WHERE id = ? AND user_id = ?',
-      [quantity, cartItemId, 'mock-user']
-    );
+    // Get cart item with product info
+    const cartItem = await dbGet(`
+      SELECT c.*, p.stock 
+      FROM cart_items c
+      JOIN products p ON c.product_id = p.id
+      WHERE c.id = ? AND c.user_id = ?
+    `, [cartItemId, req.user.id]);
 
-    if (result.changes === 0) {
+    if (!cartItem) {
       return res.status(404).json({
         success: false,
         message: 'Cart item not found'
       });
     }
+
+    if (quantity > cartItem.stock) {
+      return res.status(400).json({
+        success: false,
+        message: `Only ${cartItem.stock} items available in stock`
+      });
+    }
+
+    await dbRun(
+      'UPDATE cart_items SET quantity = ? WHERE id = ?',
+      [quantity, cartItemId]
+    );
 
     res.json({
       success: true,
@@ -232,11 +431,11 @@ app.put('/api/cart/:id', async (req, res) => {
 });
 
 // DELETE /api/cart/:id - Remove item from cart
-app.delete('/api/cart/:id', async (req, res) => {
+app.delete('/api/cart/:id', authMiddleware, async (req, res) => {
   try {
     const result = await dbRun(
       'DELETE FROM cart_items WHERE id = ? AND user_id = ?',
-      [req.params.id, 'mock-user']
+      [req.params.id, req.user.id]
     );
 
     if (result.changes === 0) {
@@ -260,8 +459,10 @@ app.delete('/api/cart/:id', async (req, res) => {
   }
 });
 
+// ==================== CHECKOUT ROUTES (Protected) ====================
+
 // POST /api/checkout - Process checkout
-app.post('/api/checkout', async (req, res) => {
+app.post('/api/checkout', authMiddleware, async (req, res) => {
   try {
     const { customerName, customerEmail, cartItems } = req.body;
 
@@ -284,12 +485,12 @@ app.post('/api/checkout', async (req, res) => {
 
     // Create order
     const result = await dbRun(
-      'INSERT INTO orders (user_id, customer_name, customer_email, total, items) VALUES (?, ?, ?, ?, ?)',
-      ['mock-user', customerName, customerEmail, total, JSON.stringify(cartItems)]
+      'INSERT INTO orders (user_id, customer_name, customer_email, total, items, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [req.user.id, customerName, customerEmail, total, JSON.stringify(cartItems), 'pending']
     );
 
     // Clear cart
-    await dbRun('DELETE FROM cart_items WHERE user_id = ?', ['mock-user']);
+    await dbRun('DELETE FROM cart_items WHERE user_id = ?', [req.user.id]);
 
     // Generate receipt
     const receipt = {
@@ -299,6 +500,7 @@ app.post('/api/checkout', async (req, res) => {
       items: cartItems,
       total: parseFloat(total.toFixed(2)),
       timestamp: new Date().toISOString(),
+      status: 'pending',
       message: 'Thank you for your purchase!'
     };
 
@@ -317,12 +519,12 @@ app.post('/api/checkout', async (req, res) => {
   }
 });
 
-// GET /api/orders - Get order history (bonus)
-app.get('/api/orders', async (req, res) => {
+// GET /api/orders - Get user's order history
+app.get('/api/orders', authMiddleware, async (req, res) => {
   try {
     const orders = await dbAll(
       'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
-      ['mock-user']
+      [req.user.id]
     );
 
     const ordersWithParsedItems = orders.map(order => ({
@@ -339,6 +541,212 @@ app.get('/api/orders', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch orders',
+      error: error.message
+    });
+  }
+});
+
+// ==================== ADMIN ROUTES ====================
+
+// GET /api/admin/users - Get all users (Admin only)
+app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await dbAll('SELECT id, email, name, role, created_at FROM users ORDER BY created_at DESC');
+    res.json({
+      success: true,
+      data: users
+    });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch users',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/admin/orders - Get all orders (Admin only)
+app.get('/api/admin/orders', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const orders = await dbAll(`
+      SELECT o.*, u.name as user_name, u.email as user_email
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      ORDER BY o.created_at DESC
+    `);
+
+    const ordersWithParsedItems = orders.map(order => ({
+      ...order,
+      items: JSON.parse(order.items)
+    }));
+
+    res.json({
+      success: true,
+      data: ordersWithParsedItems
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch orders',
+      error: error.message
+    });
+  }
+});
+
+// PUT /api/admin/orders/:id/status - Update order status (Admin only)
+app.put('/api/admin/orders/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid status is required'
+      });
+    }
+
+    const result = await dbRun(
+      'UPDATE orders SET status = ? WHERE id = ?',
+      [status, req.params.id]
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Order status updated'
+    });
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update order status',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/admin/products - Create new product (Admin only)
+app.post('/api/admin/products', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { name, price, description, image, category, stock } = req.body;
+
+    if (!name || !price) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name and price are required'
+      });
+    }
+
+    const result = await dbRun(
+      'INSERT INTO products (name, price, description, image, category, stock) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, price, description || '', image || '', category || 'General', stock || 0]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: { id: result.id }
+    });
+  } catch (error) {
+    console.error('Error creating product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create product',
+      error: error.message
+    });
+  }
+});
+
+// PUT /api/admin/products/:id - Update product (Admin only)
+app.put('/api/admin/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { name, price, description, image, category, stock } = req.body;
+
+    const result = await dbRun(
+      'UPDATE products SET name = ?, price = ?, description = ?, image = ?, category = ?, stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [name, price, description, image, category, stock, req.params.id]
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Product updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update product',
+      error: error.message
+    });
+  }
+});
+
+// DELETE /api/admin/products/:id - Delete product (Admin only)
+app.delete('/api/admin/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const result = await dbRun('DELETE FROM products WHERE id = ?', [req.params.id]);
+
+    if (result.changes === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete product',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/admin/stats - Get dashboard statistics (Admin only)
+app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const totalUsers = await dbGet('SELECT COUNT(*) as count FROM users');
+    const totalOrders = await dbGet('SELECT COUNT(*) as count FROM orders');
+    const totalRevenue = await dbGet('SELECT SUM(total) as revenue FROM orders');
+    const totalProducts = await dbGet('SELECT COUNT(*) as count FROM products');
+    const pendingOrders = await dbGet('SELECT COUNT(*) as count FROM orders WHERE status = "pending"');
+
+    res.json({
+      success: true,
+      data: {
+        totalUsers: totalUsers.count,
+        totalOrders: totalOrders.count,
+        totalRevenue: totalRevenue.revenue || 0,
+        totalProducts: totalProducts.count,
+        pendingOrders: pendingOrders.count
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch statistics',
       error: error.message
     });
   }
@@ -375,6 +783,9 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Vibe Commerce API running on port ${PORT}`);
   console.log(`📍 http://localhost:${PORT}`);
+  console.log(`\n👤 Default Accounts:`);
+  console.log(`   Admin: admin@vibecommerce.com / admin123`);
+  console.log(`   User: user@example.com / user123`);
 });
 
 module.exports = app;
